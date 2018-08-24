@@ -1,15 +1,21 @@
 #!/bin/bash
 # download AVSpeech dataset
 #
-# required software packages: youtube-dl, ffmpeg, parallel
-# command line arguments: <path to csv file> <output directory>
-# environment variables: dryrun={0|1}, njobs=<#>, faster={0|1}
+# usage:      download.sh <path-to-csv-file> <output-directory>
+# env vars:   dryrun={0|1} njobs=<n> faster={0|1}
+# dependency: youtube-dl, ffmpeg, parallel
+# author:     Changil Kim <changil@csail.mit.edu>
+#
+# examples:
+#   download.sh avspeech_train.csv data/train
+#   njobs=1 faster=1 download.sh avspeech_train.csv data/train
 
-# dry run if nonzero
+# read environment variables
+# dry run if set (default: unset)
 dryrun="${dryrun:-0}"
-# number of parallel tasks
-njobs="${njobs:-12}"
-# faster download (always download 720p video)
+# number of parallel tasks (default: #cpu cores)
+njobs="${njobs:-0}"
+# faster download if set (always download 720p video; default: unset)
 faster="${faster:-0}"
 
 # check if all arguments are given
@@ -44,12 +50,16 @@ get_time() {
 	date "+[%Y/%m/%d %H:%M:%S]"
 }
 
-# covert seconds to HH.MM.SS.FFF format
+# covert seconds to hh:mm:ss.ffffff format
 format_time() {
 	h=$(bc <<< "${1}/3600")
 	m=$(bc <<< "(${1}%3600)/60")
 	s=$(bc <<< "${1}%60")
-	printf "%02d:%02d:%06.3f\n" $h $m $s
+	printf "%02d:%02d:%09.6f\n" $h $m $s
+}
+
+format_seconds() {
+	printf "%010.6f\n" "$1"
 }
 
 show_msg() {
@@ -57,52 +67,59 @@ show_msg() {
 }
 
 download_video() {
+	# parse csv
 	IFS=',' read -r ytid start end x y <<< "$1"
 
+	id="${ytid}_$(format_seconds "$start")-$(format_seconds "$end")"
+	filename="$id.mp4"
+
 	# check if video exists
-	[[ -f "$outdir/$ytid.mp4" ]] && { show_msg "$ytid" "skipped"; return; }
+	[[ -f "$outdir/$filename" ]] && { show_msg "$id" "skipped"; return; }
 
 	# make sure output directory exists
-	$mkdir "$outdir" || { show_msg "$ytid" "ERROR: failed to create output directory"; return; }
+	$mkdir "$outdir" || { show_msg "$id" "ERROR: failed to create output directory"; return; }
 
-	start_time="$(format_time $start)"
 	duration="$(bc <<< "$end - $start")"
 
 	if [[ "$faster" -eq 0 ]]; then
 		# download the highest quality video
 
 		# download video
-		$youtubedl --format 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio' --merge-output-format mp4 --prefer-ffmpeg --output "$outdir/%(id)s.%(ext)s.inprogress.1" -- "$ytid" || { show_msg "$ytid" "ERROR: failed to download video"; return; }
+		$youtubedl --format 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio' --merge-output-format mp4 --prefer-ffmpeg --output "$outdir/$filename.inprogress.1" -- "$ytid" || { show_msg "$id" "ERROR: failed to download video"; return; }
 		# youtube-dl appends additional extension when merging video & audio - remove it
-		$mv "$outdir/$ytid.mp4.inprogress.1.mp4" "$outdir/$ytid.mp4.inprogress.1" || { show_msg "$ytid" "ERROR: failed to rename temporary video"; return; }
+		$mv "$outdir/$filename.inprogress.1.mp4" "$outdir/$filename.inprogress.1" || { show_msg "$id" "ERROR: failed to rename temporary video"; return; }
 
 		# cut video
-		$ffmpeg -ss "$start_time" -i "$outdir/$ytid.mp4.inprogress.1" -t "$duration" -c:v copy -c:a copy -f mp4 -threads 1 "$outdir/$ytid.mp4.inprogress.2" < /dev/null || { show_msg "$ytid" "ERROR: failed to cut video"; return; }
+		$ffmpeg -ss "$start" -i "$outdir/$filename.inprogress.1" -t "$duration" -c:v copy -c:a copy -f mp4 -threads 1 "$outdir/$filename.inprogress.2" < /dev/null || { show_msg "$id" "ERROR: failed to cut video"; return; }
 
 		# cleanup
-		$rm "$outdir/$ytid.mp4.inprogress.1" || { show_msg "$ytid" "ERROR: failed to remove temporary file"; return; }
-		$mv "$outdir/$ytid.mp4.inprogress.2" "$outdir/$ytid.mp4" || { show_msg "$ytid" "ERROR: failed to rename video"; return; }
+		$rm "$outdir/$filename.inprogress.1" || { show_msg "$id" "ERROR: failed to remove temporary file"; return; }
+		$mv "$outdir/$filename.inprogress.2" "$outdir/$filename" || { show_msg "$id" "ERROR: failed to rename video"; return; }
 
 	else
 		# download 720p hd video
 
 		# get video link (try 720p/360p mp4 format in that order)
-		url="$($youtubedl --get-url --format '22/18' -- "$ytid")" || { show_msg "$ytid" "ERROR: failed to get video url"; return; }
+		url="$($youtubedl --get-url --format '22/18' -- "$ytid")" || { show_msg "$id" "ERROR: failed to get video url"; return; }
 
 		# download (only the interesting part of) video
-		$ffmpeg -ss "$start_time" -i "$url" -t "$duration" -c:v copy -c:a copy -f mp4 -threads 1 "$outdir/$ytid.mp4.inprogress" < /dev/null || { show_msg "$ytid" "ERROR: failed to download video"; return; }
+		$ffmpeg -ss "$start" -i "$url" -t "$duration" -c:v copy -c:a copy -f mp4 -threads 1 "$outdir/$filename.inprogress" < /dev/null || { show_msg "$id" "ERROR: failed to download video"; return; }
 
 		# cleanup
-		$mv "$outdir/$ytid.mp4.inprogress" "$outdir/$ytid.mp4" || { show_msg "$ytid" "ERROR: failed to rename video"; return; }
+		$mv "$outdir/$filename.inprogress" "$outdir/$filename" || { show_msg "$id" "ERROR: failed to rename video"; return; }
 
 	fi
 
-	show_msg "$ytid" "downloaded"
+	show_msg "$id" "downloaded"
 }
 
-export youtubedl ffmpeg mv rm mkdir parallel dryrun outdir
-export -f get_time format_time show_msg download_video
+export youtubedl ffmpeg mv rm mkdir outdir faster
+export -f get_time format_time format_seconds show_msg download_video
+
+trap 'printf "%s %s\n" "$(get_time)" "*** download interrupted ***"; exit 2' INT QUIT TERM
+printf "%s %s\n" "$(get_time)" "*** download starts ***"
 
 cat "$csvfile" | $parallel -j "$njobs" -k download_video
-#head -n 1 "$csvfile" | $parallel -j "$njobs" -k download_video
+
+printf "%s %s\n" "$(get_time)" "*** download ends ***"
 
