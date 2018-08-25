@@ -73,13 +73,14 @@ download_video() {
 	id="${ytid}_$(format_seconds "$start")-$(format_seconds "$end")"
 	filename="$id.mp4"
 
-	# check if video exists
+	# skip if video exists
 	[[ -f "$outdir/$filename" ]] && { show_msg "$id" "skipped"; return; }
 
 	# make sure output directory exists
 	$mkdir "$outdir" || { show_msg "$id" "ERROR: failed to create output directory"; return; }
 
 	duration="$(bc <<< "$end - $start")"
+	t="$(date +%s.%N)"
 
 	if [[ "$faster" -eq 0 ]]; then
 		# download the highest quality video
@@ -110,7 +111,8 @@ download_video() {
 
 	fi
 
-	show_msg "$id" "downloaded"
+	walltime="$(printf "%.1f" "$(bc <<< "$(date +%s.%N) - $t")")"
+	show_msg "$id" "downloaded (${walltime}s)"
 }
 
 export youtubedl ffmpeg mv rm mkdir outdir faster
@@ -119,7 +121,7 @@ export -f get_time format_time format_seconds show_msg download_video
 trap 'printf "%s %s\n" "$(get_time)" "*** download interrupted ***"; exit 2' INT QUIT TERM
 printf "%s %s\n" "$(get_time)" "*** download starts ***"
 
-cat "$csvfile" | $parallel -j "$njobs" -k download_video
+cat "$csvfile" | $parallel -j "$njobs" --timeout 600 download_video
 
 printf "%s %s\n" "$(get_time)" "*** download ends ***"
 
