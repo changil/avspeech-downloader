@@ -101,7 +101,9 @@ download_video() {
 		# download 720p hd video
 
 		# get video link (try 720p/360p mp4 format in that order)
-		url="$($youtubedl --get-url --format '22/18' -- "$ytid")" || { show_msg "$id" "ERROR: failed to get video url"; return; }
+		# youtube-dl format 22 is the following:
+		# 22     mp4        1280x720   hd720 , avc1.64001F, mp4a.40.2@192k (best)
+		url="$($youtubedl -f 22 --get-url --format '22/18' -- "$ytid")" || { show_msg "$id" "ERROR: failed to get video url"; return; }
 
 		# download (only the interesting part of) video
 		$ffmpeg -ss "$start" -i "$url" -t "$duration" -c:v copy -c:a copy -f mp4 -threads 1 "$outdir/$filename.inprogress" < /dev/null || { show_msg "$id" "ERROR: failed to download video"; return; }
